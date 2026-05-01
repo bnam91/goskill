@@ -7,4 +7,6 @@ contextBridge.exposeInMainWorld('api', {
   readCatalog: ()            => ipcRenderer.invoke('catalog:read'),
   sidesInfo:   ()            => ipcRenderer.invoke('sides:info'),
   gitPull:     ()            => ipcRenderer.invoke('git:pull'),
+  downloadSkill: (name)      => ipcRenderer.invoke('skills:download', { name }),
+  clipboardWrite: (text)     => ipcRenderer.invoke('clipboard:write', text),
 });

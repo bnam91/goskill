@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, clipboard } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const os = require('node:os');
@@ -163,6 +163,30 @@ async function deleteSkill({ side, name }) {
   return { deleted: name, path: resolved };
 }
 
+async function downloadSkill({ name }) {
+  if (!name || typeof name !== 'string' || name.includes('/') || name.includes('..') || name.startsWith('.')) {
+    throw new Error(`잘못된 스킬 이름: ${name}`);
+  }
+  const src = path.join(SIDES.remote.path, name);
+  const dst = path.join(SIDES.local.path, name);
+
+  // src 존재 확인
+  const srcStat = await fs.stat(src).catch(() => null);
+  if (!srcStat || !srcStat.isDirectory()) {
+    throw new Error(`REMOTE에 ${name} 폴더 없음`);
+  }
+
+  // dst 이미 있으면 충돌 (renderer가 사전 검사하지만 안전망)
+  const dstStat = await fs.lstat(dst).catch(() => null);
+  if (dstStat) {
+    return { ok: false, conflict: true, name };
+  }
+
+  // 복사 (recursive)
+  await fs.cp(src, dst, { recursive: true });
+  return { ok: true, name, path: dst };
+}
+
 async function gitPullRemote() {
   const cwd = SIDES.remote.path;
   const gitDir = path.join(cwd, '.git');
@@ -195,6 +219,8 @@ app.whenReady().then(() => {
   ipcMain.handle('skills:delete', (_, args) => deleteSkill(args));
   ipcMain.handle('catalog:read',  () => readCatalog());
   ipcMain.handle('git:pull',      () => gitPullRemote());
+  ipcMain.handle('skills:download', (_, args) => downloadSkill(args));
+  ipcMain.handle('clipboard:write', (_, text) => clipboard.writeText(String(text || '')));
   ipcMain.handle('sides:info',    () => ({
     local:  { label: SIDES.local.label,  path: SIDES.local.path },
     remote: { label: SIDES.remote.label, path: SIDES.remote.path },

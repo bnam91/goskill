@@ -499,11 +499,60 @@ function handleUpload() {
   alert(`📤 업로드 예정 (LOCAL → REMOTE)\n\n${list}\n\n⚠️ 실제 업로드 기능은 아직 구현 전입니다. (UI 스테이지 확인용)`);
 }
 
-function handleDownload() {
+async function handleDownload() {
   const names = [...state.stagedRemote];
   if (!names.length) return;
-  const list = names.map(n => ` • ${n}`).join('\n');
-  alert(`📥 다운받기 예정 (REMOTE → LOCAL)\n\n${list}\n\n⚠️ 실제 다운로드 기능은 아직 구현 전입니다. (UI 스테이지 확인용)`);
+
+  // 사전 충돌 검사 (LOCAL에 같은 이름 있는지)
+  const lNames = localNames();
+  const conflicts = names.filter(n => lNames.has(n));
+  const ready     = names.filter(n => !lNames.has(n));
+
+  // 충돌 발견 → 알럿 + 클립보드 자동 복사 (해당 스킬은 다운로드 안 함)
+  if (conflicts.length) {
+    const promptText = `${conflicts.join(', ')}을(를) 다운받기하려는데 이미 같은 이름이 skills에 있습니다. 충돌이 걱정되는데 문제없게 가져와주세요. 확인이 필요하다면 먼저 물어주세요.`;
+
+    try { await window.api.clipboardWrite(promptText); } catch {}
+
+    const conflictList = conflicts.map(n => ` • ${n}`).join('\n');
+    alert(
+      `⚠️ 충돌 감지\n\n` +
+      `${conflictList}\n\n` +
+      `이미 LOCAL에 같은 이름이 있어 다운로드를 건너뜁니다.\n` +
+      `Claude Code에 전달할 프롬프트가 클립보드에 복사됐습니다.\n\n` +
+      `--- 클립보드 내용 ---\n${promptText}`
+    );
+  }
+
+  // 충돌 없는 것만 실제 다운로드
+  if (ready.length === 0) {
+    setStatus('다운로드 건너뜀 (모든 항목 충돌)');
+    return;
+  }
+
+  setStatus(`다운로드 중... (${ready.length}개)`);
+  let success = 0, failed = 0;
+  const errors = [];
+  for (const name of ready) {
+    try {
+      const r = await window.api.downloadSkill(name);
+      if (r.ok) success++;
+      else { failed++; errors.push(`${name}: ${r.conflict ? '충돌' : '실패'}`); }
+    } catch (e) {
+      failed++;
+      errors.push(`${name}: ${e.message}`);
+    }
+  }
+
+  alert(
+    `📥 다운로드 결과\n\n` +
+    `성공 ${success}개 · 실패 ${failed}개${conflicts.length ? ` · 충돌 ${conflicts.length}개(건너뜀)` : ''}\n` +
+    (errors.length ? `\n실패 항목:\n${errors.map(e => ` • ${e}`).join('\n')}` : '')
+  );
+
+  // 스테이징 비우고 새로고침
+  state.stagedRemote.clear();
+  await load();
 }
 
 async function handleDelete() {
