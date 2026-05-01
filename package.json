@@ -1,0 +1,13 @@
+{
+  "name": "goskill",
+  "version": "0.1.0",
+  "private": true,
+  "description": "고야 스킬 선택적 배포 시스템 GUI 뷰어 (개인 ↔ 공용 스킬 비교 및 다운로드)",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron . --remote-debugging-port=9344"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0"
+  }
+}
