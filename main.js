@@ -8,13 +8,35 @@ const execFileP = promisify(execFile);
 
 // 개발 모드일 때만 핫 리로드 (npm run dev로 실행 시)
 if (process.env.NODE_ENV === 'development') {
+  // main/preload 파일 변경 → 앱 자동 재시작
   try {
     require('electron-reloader')(module, {
-      ignore: ['VERSION.txt', '.git', 'node_modules'],
+      ignore: ['VERSION.txt', '.git', 'node_modules', 'renderer'],
     });
-    console.log('🔥 핫 리로드 활성화');
+    console.log('🔥 main 핫 리로드 활성화');
   } catch (e) {
     console.warn('electron-reloader 로드 실패:', e.message);
+  }
+
+  // renderer/* 변경 → BrowserWindow 자동 reload (electron-reloader는 main이 require한 파일만 봄)
+  try {
+    const chokidar = require('chokidar');
+    const watcher = chokidar.watch(path.join(__dirname, 'renderer'), {
+      ignoreInitial: true,
+    });
+    let reloadTimer = null;
+    watcher.on('all', (event, filepath) => {
+      if (reloadTimer) clearTimeout(reloadTimer);
+      reloadTimer = setTimeout(() => {
+        console.log('🔄 renderer 변경 감지:', path.basename(filepath));
+        BrowserWindow.getAllWindows().forEach(w => {
+          if (!w.isDestroyed()) w.webContents.reloadIgnoringCache();
+        });
+      }, 80); // 다중 저장 디바운스
+    });
+    console.log('🔥 renderer 핫 리로드 활성화 (chokidar)');
+  } catch (e) {
+    console.warn('chokidar 로드 실패:', e.message);
   }
 }
 

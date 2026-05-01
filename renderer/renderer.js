@@ -23,6 +23,7 @@ const els = {
   filterLocal:     document.getElementById('filter-local'),
   filterRemote:    document.getElementById('filter-remote'),
   btnHeyclaudePrompt: document.getElementById('btn-heyclaude-prompt'),
+  btnSetupPrompt:  document.getElementById('btn-setup-prompt'),
   appVersion:      document.getElementById('app-version'),
 };
 
@@ -59,6 +60,7 @@ let state = {
   stagedLocal:  new Set(), // 업로드 후보 (LOCAL → REMOTE)
   stagedRemote: new Set(), // 다운받기 후보 (REMOTE → LOCAL)
   uploadTags: new Map(),   // name → tag (업로드 시 분류)
+  customTags: new Set(),   // 사용자가 이 세션에 추가한 새 태그 (catalog에 아직 없음)
   prepStatus: new Map(),   // name → boolean (goskill_stage에 heyclaude.md 있는지 = 전처리 완료)
   filter:   { local: '',    remote: ''    },
   category: { local: 'all', remote: 'all' },
@@ -421,9 +423,10 @@ function renderStageRows(side, container, stagedSet) {
       optNone.value = ''; optNone.textContent = '분류 없음';
       sel.appendChild(optNone);
 
-      // 기존 태그 목록 + 'onboarding' 기본 추천 + 현재값
+      // 기존 태그 목록 + 'onboarding' 기본 추천 + 사용자 추가 태그 + 현재값
       const tagOptions = new Set(getTagKeys());
       tagOptions.add('onboarding');
+      for (const t of state.customTags) tagOptions.add(t);
       if (current) tagOptions.add(current);
       const sortedTags = [...tagOptions].sort((a, b) => {
         if (a === 'onboarding') return -1;
@@ -437,8 +440,36 @@ function renderStageRows(side, container, stagedSet) {
         o.textContent = tk;
         sel.appendChild(o);
       }
+
+      // 마지막에 "+ 새 태그…" 옵션 (선택 시 prompt로 입력받음)
+      const optNew = document.createElement('option');
+      optNew.value = '__new__';
+      optNew.textContent = '+ 새 태그…';
+      sel.appendChild(optNew);
+
       sel.value = current || '';
       sel.addEventListener('change', () => {
+        if (sel.value === '__new__') {
+          const input = prompt(
+            '새 태그 이름을 입력하세요\n(예: coupang, notion, figma, dev, pm)\n공백·구분자 없이 짧게.',
+            ''
+          );
+          const tag = (input || '').trim();
+          if (!tag) {
+            sel.value = current || '';
+            return;
+          }
+          if (tag.length > 30 || /[\s\/\\:,;|]/.test(tag)) {
+            alert('태그 이름이 부적절합니다 (공백/구분자 금지, 30자 이하).');
+            sel.value = current || '';
+            return;
+          }
+          state.customTags.add(tag);
+          state.uploadTags.set(name, tag);
+          // 모든 LOCAL stage 행을 다시 그려서 새 태그가 다른 셀렉트에도 노출되게 함
+          renderStageRows('local', els.stageItemsLocal, state.stagedLocal);
+          return;
+        }
         if (sel.value) state.uploadTags.set(name, sel.value);
         else state.uploadTags.delete(name);
       });
@@ -562,6 +593,51 @@ async function handleHeyclaudePrompt() {
   alert(
     `📋 직원용 전처리 프롬프트가 클립보드에 복사됐습니다.\n` +
     `Claude Code에 붙여넣어 점검을 요청하세요.\n\n` +
+    `--- 클립보드 내용 ---\n${promptText}`
+  );
+}
+
+function buildSetupPromptText(names) {
+  const items = names.map(n =>
+    ` • ${n}\n` +
+    `   - 위치: ~/.claude/skills/${n}/\n` +
+    `   - heyclaude.md 따라 진행`
+  ).join('\n\n');
+
+  return (
+    `방금 다운받은 스킬의 환경 세팅을 진행해줘:\n\n` +
+    `${items}\n\n` +
+    `## Phase 1. 환경 세팅\n` +
+    `각 스킬의 heyclaude.md를 읽고:\n` +
+    `1. 사전 요구사항 체크\n` +
+    `2. 부족한 의존성 설치 (idempotent — 이미 있으면 skip)\n` +
+    `3. 자격증명/외부 다운로드 단계는 사용자에게 안내 후 확인 대기\n` +
+    `4. 완료 후 "사전 요구사항 체크" 다시 돌려서 통과 확인\n\n` +
+    `## Phase 2. 셀프 테스트 (자동)\n` +
+    `세팅이 통과한 스킬마다 가장 단순한 동작을 직접 한 번 실행해서 정상 작동을 확인:\n` +
+    ` - heyclaude.md에 "검증" / "테스트" / "예시" 섹션이 있으면 그걸 그대로 실행\n` +
+    ` - 없으면 SKILL.md에서 가장 가벼운 read-only 동작 1개를 골라 실행 (목록 조회, 인증 확인 등)\n` +
+    ` - 자격증명/외부 자원이 필요해서 자동 검증 불가하면 "수동 확인 필요"로 표시\n\n` +
+    `## Phase 3. 보고\n` +
+    `마지막에 표로 요약:\n` +
+    ` - ✅ 세팅+테스트 통과 / ⚠️ 세팅만 통과 (테스트 미실행) / ❌ 실패 / ⏭️ heyclaude.md 없음(건너뜀)\n` +
+    ` - 실패/수동확인 항목은 다음 액션 1줄씩\n`
+  );
+}
+
+async function handleSetupPrompt() {
+  const names = [...state.stagedRemote];
+  if (!names.length) {
+    alert('원격 작업 대기 영역에 스킬을 먼저 추가하세요.');
+    return;
+  }
+
+  const promptText = buildSetupPromptText(names);
+  try { await window.api.clipboardWrite(promptText); } catch {}
+
+  alert(
+    `📋 환경 세팅 프롬프트가 클립보드에 복사됐습니다.\n` +
+    `Claude Code에 붙여넣어 세팅을 요청하세요.\n\n` +
     `--- 클립보드 내용 ---\n${promptText}`
   );
 }
@@ -700,10 +776,24 @@ async function handleDownload() {
     }
   }
 
+  // 성공한 항목들에 대해 환경 세팅 프롬프트 자동 클립보드 복사
+  const succeeded = ready.slice(0, success);
+  let setupPromptCopied = false;
+  if (succeeded.length) {
+    try {
+      const promptText = buildSetupPromptText(succeeded);
+      await window.api.clipboardWrite(promptText);
+      setupPromptCopied = true;
+    } catch {}
+  }
+
   alert(
     `📥 다운로드 결과\n\n` +
     `성공 ${success}개 · 실패 ${failed}개${conflicts.length ? ` · 충돌 ${conflicts.length}개(건너뜀)` : ''}\n` +
-    (errors.length ? `\n실패 항목:\n${errors.map(e => ` • ${e}`).join('\n')}` : '')
+    (errors.length ? `\n실패 항목:\n${errors.map(e => ` • ${e}`).join('\n')}\n` : '') +
+    (setupPromptCopied
+      ? `\n📋 환경 세팅 프롬프트가 클립보드에 복사됐습니다.\nClaude Code에 붙여넣으면 heyclaude.md를 따라 세팅 + 셀프 테스트까지 진행합니다.`
+      : '')
   );
 
   // 스테이징 비우고 새로고침
@@ -753,6 +843,7 @@ async function handleDelete() {
 els.refresh.addEventListener('click', load);
 els.btnExecUpload.addEventListener('click', handleUpload);
 els.btnHeyclaudePrompt.addEventListener('click', handleHeyclaudePrompt);
+els.btnSetupPrompt.addEventListener('click', handleSetupPrompt);
 els.btnExecDownload.addEventListener('click', handleDownload);
 els.btnExecDelete.addEventListener('click', handleDelete);
 els.searchLocal.addEventListener('input',  (e) => { state.filter.local  = e.target.value; renderList('local');  });
