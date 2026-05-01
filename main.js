@@ -56,25 +56,16 @@ async function checkForUpdates(mainWindow) {
       type: 'info',
       title: 'goskill 업데이트 알림',
       message: `새 버전이 있습니다: ${latest.tag_name}`,
-      detail: `현재: ${current ?? '없음'}\n\n업데이트 후 앱을 재시작하세요.`,
+      detail: `현재: ${current ?? '없음'}\n\n업데이트 시 앱이 자동으로 재시작됩니다.`,
       buttons: ['지금 업데이트', '나중에'],
       defaultId: 0,
     });
 
     if (response === 0) {
       await updater.performUpdate(latest);
-      const { response: restartRes } = await dialog.showMessageBox(mainWindow, {
-        type: 'info',
-        title: '업데이트 완료',
-        message: `${latest.tag_name} 업데이트가 완료됐습니다.`,
-        detail: '지금 앱을 재시작할까요?',
-        buttons: ['지금 재시작', '나중에'],
-        defaultId: 0,
-      });
-      if (restartRes === 0) {
-        app.relaunch();
-        app.exit(0);
-      }
+      // 업데이트 완료 → 자동 재시작 (다이얼로그 불필요)
+      app.relaunch();
+      app.exit(0);
     }
   } catch (e) {
     console.error('업데이트 체크 오류:', e.message);
