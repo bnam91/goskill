@@ -538,20 +538,24 @@ async function handleHeyclaudePrompt() {
 
   const items = names.map(n => {
     const t = state.uploadTags.get(n) || '미지정';
-    return ` • ${n} (태그: ${t})`;
-  }).join('\n');
+    return ` • ${n}\n` +
+           `   - 원본 (read-only): ~/.claude/skills/${n}/\n` +
+           `   - 출력: ~/goskill_stage/${n}/\n` +
+           `   - 태그: ${t}`;
+  }).join('\n\n');
 
   const promptText =
     `직원 공유 전 스킬을 점검하고 가공본을 만들어줘:\n\n` +
     `${items}\n\n` +
-    `/goskill-heyclaude 메타 스킬을 사용해서 각 스킬을 처리:\n` +
-    `1. ~/.claude/skills/<스킬명>/ (대표님 LOCAL 원본) 읽기 — 절대 수정 X\n` +
+    `/goskill-heyclaude 메타 스킬로 처리:\n` +
+    `1. 원본 읽기 (절대 수정 X)\n` +
     `2. 외부 의존성, 개인정보 노출, 변수화 가능 부분 분석 보고\n` +
-    `3. 가공본을 ~/goskill_stage/<스킬명>/ 에 생성:\n` +
-    `   - LOCAL 파일 복사 후 SKILL.md 일반화 (개인 경로/별칭 변수화)\n` +
-    `   - heyclaude.md 신규 생성 (직원 환경 세팅 가이드)\n` +
-    `4. 문제 있으면 업로드 전 알려줘\n\n` +
-    `※ goskill_stage에 heyclaude.md가 없으면 업로드 차단됩니다. 모든 스킬의 가공본이 준비되어야 업로드 진행 가능.`;
+    `3. 출력 위치에 가공본 생성:\n` +
+    `   - 이미 있으면 → LOCAL과 비교해서 변경분 보고 후 갱신 여부 사용자 확인\n` +
+    `   - 없으면 → 신규 생성 (SKILL.md 일반화 + heyclaude.md 신규)\n` +
+    `4. ~/goskill_stage/skills-list.json 항목 갱신 (description, tag)\n` +
+    `5. 결과 보고 (변경/신규 항목, 일반화한 부분, 남은 TODO)\n\n` +
+    `※ goskill_stage에 heyclaude.md가 없으면 goskill 앱에서 업로드가 차단됩니다.`;
 
   try { await window.api.clipboardWrite(promptText); } catch {}
 
