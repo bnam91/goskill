@@ -48,6 +48,7 @@ let state = {
   stagedLocal:  new Set(), // 업로드 후보 (LOCAL → REMOTE)
   stagedRemote: new Set(), // 다운받기 후보 (REMOTE → LOCAL)
   uploadTags: new Map(),   // name → tag (업로드 시 분류)
+  prepStatus: new Map(),   // name → boolean (goskill_stage에 heyclaude.md 있는지 = 전처리 완료)
   filter:   { local: '',    remote: ''    },
   category: { local: 'all', remote: 'all' },
   groupOverride: new Map(), // groupKey → 'collapsed'|'expanded' (사용자 수동 토글)
@@ -350,7 +351,7 @@ function toggleStage(side, name) {
   renderStagePanel();
 }
 
-function renderStagePanel() {
+async function renderStagePanel() {
   const u = state.stagedLocal.size;
   const d = state.stagedRemote.size;
 
@@ -361,6 +362,16 @@ function renderStagePanel() {
   els.btnExecDelete.disabled   = d === 0;
   els.btnClearLocal.disabled   = u === 0;
   els.btnClearRemote.disabled  = d === 0;
+
+  // LOCAL 스테이징 항목들의 전처리 상태 갱신 (goskill_stage에 heyclaude.md 있나)
+  for (const name of state.stagedLocal) {
+    try {
+      const has = await window.api.hasSkillFile('remote', name, 'heyclaude.md');
+      state.prepStatus.set(name, has);
+    } catch {
+      state.prepStatus.set(name, false);
+    }
+  }
 
   renderStageRows('local',  els.stageItemsLocal,  state.stagedLocal);
   renderStageRows('remote', els.stageItemsRemote, state.stagedRemote);
@@ -421,6 +432,23 @@ function renderStageRows(side, container, stagedSet) {
         else state.uploadTags.delete(name);
       });
       row.appendChild(sel);
+
+      // 전처리 완료 배지 (goskill_stage에 heyclaude.md 있나)
+      const prepBadge = document.createElement('span');
+      prepBadge.className = 'skill-badge';
+      const isPrepped = state.prepStatus.get(name) === true;
+      if (isPrepped) {
+        prepBadge.textContent = '✅ 전처리 완료';
+        prepBadge.style.background = '#1f6f3a';
+        prepBadge.style.color = '#fff';
+        prepBadge.title = '~/goskill_stage/' + name + '/heyclaude.md 존재';
+      } else {
+        prepBadge.textContent = '⚠️ 전처리 필요';
+        prepBadge.style.background = '#7a4a00';
+        prepBadge.style.color = '#fff';
+        prepBadge.title = 'heyclaude.md 누락 — "🔧 직원용 전처리" 버튼 먼저 실행';
+      }
+      row.appendChild(prepBadge);
     }
 
     const remove = document.createElement('button');
@@ -503,18 +531,21 @@ async function handleHeyclaudePrompt() {
   }).join('\n');
 
   const promptText =
-    `goskill_stage에 업로드 대기 중인 스킬을 직원 공유 전 점검해줘:\n\n` +
+    `직원 공유 전 스킬을 점검하고 가공본을 만들어줘:\n\n` +
     `${items}\n\n` +
-    `/goskill-heyclaude 메타 스킬을 사용해서 각 스킬을 점검해주고:\n` +
-    `1. 외부 의존성, 개인정보 노출, 변수화 가능 부분 등 분석 보고\n` +
-    `2. 각 스킬 폴더(~/.claude/skills/<스킬명>/)에 heyclaude.md를 생성하거나 갱신\n` +
-    `3. 문제 있으면 업로드 전 알려줘\n\n` +
-    `※ heyclaude.md가 없으면 goskill 앱에서 업로드가 차단됩니다. 모든 스킬에 heyclaude.md가 준비되어야 업로드 진행 가능.`;
+    `/goskill-heyclaude 메타 스킬을 사용해서 각 스킬을 처리:\n` +
+    `1. ~/.claude/skills/<스킬명>/ (대표님 LOCAL 원본) 읽기 — 절대 수정 X\n` +
+    `2. 외부 의존성, 개인정보 노출, 변수화 가능 부분 분석 보고\n` +
+    `3. 가공본을 ~/goskill_stage/<스킬명>/ 에 생성:\n` +
+    `   - LOCAL 파일 복사 후 SKILL.md 일반화 (개인 경로/별칭 변수화)\n` +
+    `   - heyclaude.md 신규 생성 (직원 환경 세팅 가이드)\n` +
+    `4. 문제 있으면 업로드 전 알려줘\n\n` +
+    `※ goskill_stage에 heyclaude.md가 없으면 업로드 차단됩니다. 모든 스킬의 가공본이 준비되어야 업로드 진행 가능.`;
 
   try { await window.api.clipboardWrite(promptText); } catch {}
 
   alert(
-    `📋 검수 의뢰 프롬프트가 클립보드에 복사됐습니다.\n` +
+    `📋 직원용 전처리 프롬프트가 클립보드에 복사됐습니다.\n` +
     `Claude Code에 붙여넣어 점검을 요청하세요.\n\n` +
     `--- 클립보드 내용 ---\n${promptText}`
   );
@@ -524,10 +555,29 @@ async function handleUpload() {
   const names = [...state.stagedLocal];
   if (!names.length) return;
 
-  // 사전 검증 1: heyclaude.md 존재 (없으면 업로드 차단)
+  // 흐름 B: 업로드 = goskill_stage에 이미 만들어둔 가공본을 git push.
+  // 메타 스킬이 ~/goskill_stage/<name>/에 미리 SKILL.md + heyclaude.md를 생성해뒀어야 함.
+  // 여기선 단순히 검증만 (가공본 누락 시 차단).
+
+  // 사전 검증 1: REMOTE(goskill_stage)에 가공본 폴더 존재
+  const noRemoteFolder = [];
+  for (const n of names) {
+    const has = await window.api.hasSkillFile('remote', n, 'SKILL.md');
+    if (!has) noRemoteFolder.push(n);
+  }
+  if (noRemoteFolder.length) {
+    alert(
+      `⚠️ goskill_stage에 가공본 누락 — 업로드 차단\n\n` +
+      `${noRemoteFolder.map(n => ' • ' + n).join('\n')}\n\n` +
+      `먼저 "🔧 직원용 전처리" 버튼을 눌러 메타 스킬(goskill-heyclaude)로 가공본을 만들어주세요.`
+    );
+    return;
+  }
+
+  // 사전 검증 2: heyclaude.md 존재 (REMOTE에서)
   const noHeyclaude = [];
   for (const n of names) {
-    const has = await window.api.hasSkillFile('local', n, 'heyclaude.md');
+    const has = await window.api.hasSkillFile('remote', n, 'heyclaude.md');
     if (!has) noHeyclaude.push(n);
   }
   if (noHeyclaude.length) {
@@ -535,15 +585,14 @@ async function handleUpload() {
       `⚠️ heyclaude.md 누락 — 업로드 차단\n\n` +
       `${noHeyclaude.map(n => ' • ' + n).join('\n')}\n\n` +
       `직원의 Claude Code가 환경 세팅을 못 하는 상태로 업로드되면 안 됩니다.\n` +
-      `먼저 "🔍 검수 의뢰" 버튼을 눌러 점검 + heyclaude.md 생성 후 업로드하세요.`
+      `먼저 "🔧 직원용 전처리" 버튼을 눌러 가공본 + heyclaude.md를 생성해주세요.`
     );
     return;
   }
 
-  // 사전 검증 2: 충돌 검사 (REMOTE에 같은 이름 있는지)
-  const rNames = remoteNames();
-  const conflicts = names.filter(n => rNames.has(n));
-  const ready     = names.filter(n => !rNames.has(n));
+  // 흐름 B에선 충돌 검사 불필요 (메타 스킬이 이미 goskill_stage에 만들어둠 = 의도된 덮어쓰기)
+  const ready = names;
+  const conflicts = [];
 
   // 충돌 → 알럿 + 클립보드 자동 복사 (해당 스킬은 업로드 안 함)
   if (conflicts.length) {
@@ -566,48 +615,23 @@ async function handleUpload() {
     return;
   }
 
-  // 업로드 전 미리보기 (태그 정보 포함)
-  const previewList = ready.map(n => {
-    const t = state.uploadTags.get(n) || '(분류 없음)';
-    return ` • ${n}  →  태그: ${t}`;
-  }).join('\n');
-  if (!confirm(`📤 업로드 시작 (LOCAL → REMOTE → GitHub push)\n\n${previewList}\n\n진행할까요?`)) {
+  // 업로드 전 미리보기
+  const previewList = ready.map(n => ` • ${n}`).join('\n');
+  if (!confirm(`📤 GitHub에 push (goskill_stage의 가공본을 직원에게 공개)\n\n${previewList}\n\n진행할까요?`)) {
     setStatus('업로드 취소됨');
     return;
   }
 
-  // 1) 파일 복사 + skills-list.json 갱신
-  setStatus(`업로드 중... (${ready.length}개)`);
-  let success = 0, failed = 0;
-  const errors = [];
-  const uploaded = [];
-  for (const name of ready) {
-    try {
-      const tag = state.uploadTags.get(name) || '';
-      const r = await window.api.uploadSkill(name, tag);
-      if (r.ok) { success++; uploaded.push(name); }
-      else { failed++; errors.push(`${name}: ${r.conflict ? '충돌' : '실패'}`); }
-    } catch (e) {
-      failed++;
-      errors.push(`${name}: ${e.message}`);
-    }
-  }
+  // git commit + push만 (메타 스킬이 이미 goskill_stage에 가공본 만들어둠)
+  setStatus(`git commit + push 중...`);
+  const message = `feat: 스킬 ${ready.length}개 publish (${ready.join(', ')})`;
+  const pushResult = await window.api.gitCommitPush(message);
+  if (!pushResult.ok) console.warn('push 실패:', pushResult.error, pushResult.output);
 
-  // 2) git commit + push
-  let pushResult = { ok: false };
-  if (success > 0) {
-    setStatus(`git commit + push 중...`);
-    const message = `feat: 스킬 ${success}개 업로드 (${uploaded.join(', ')})`;
-    pushResult = await window.api.gitCommitPush(message);
-    if (!pushResult.ok) console.warn('push 실패:', pushResult.error, pushResult.output);
-  }
-
-  // 3) 결과 보고
   alert(
     `📤 업로드 결과\n\n` +
-    `복사 성공 ${success}개 · 실패 ${failed}개${conflicts.length ? ` · 충돌 ${conflicts.length}개(건너뜀)` : ''}\n` +
-    (success > 0 ? `\n${pushResult.ok ? '✅ GitHub push 완료' : '⚠️ push 실패: ' + (pushResult.error || '알 수 없음')}` : '') +
-    (errors.length ? `\n\n실패 항목:\n${errors.map(e => ` • ${e}`).join('\n')}` : '')
+    `대상 ${ready.length}개: ${ready.join(', ')}\n\n` +
+    `${pushResult.ok ? '✅ GitHub push 완료 — 직원이 새로고침하면 받을 수 있어요' : '⚠️ push 실패: ' + (pushResult.error || '알 수 없음')}`
   );
 
   // 스테이징 비우고 새로고침
