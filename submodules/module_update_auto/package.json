@@ -1,0 +1,7 @@
+{
+  "name": "module_update_auto",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "release_updater.js",
+  "_comment": "이 폴더 안의 .js 파일을 ESM으로 인식시키는 경계 설정 (goskill main.js는 CJS이므로 dynamic import로 호출)"
+}
