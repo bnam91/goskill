@@ -268,6 +268,7 @@ body {
   white-space: nowrap;
 }
 .badge-shared     { background: #15803d; color: #dcfce7; }
+.badge-staged     { background: #b45309; color: #fef3c7; }
 .badge-personal   { background: #3a3a40; color: #d4d4d8; }
 .badge-remoteonly { background: #854d0e; color: #fef3c7; }
 .badge-depth      { background: #1e40af; color: #dbeafe; margin-left: 4px; }
@@ -329,3 +330,78 @@ body {
   color: #9ca3af;
   display: flex; align-items: center;
 }
+
+/* prompt modal */
+.modal-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 1000;
+}
+.modal-backdrop[hidden] { display: none; }
+.modal {
+  background: #1f1f23;
+  border: 1px solid #3a3a42;
+  border-radius: 8px;
+  padding: 18px 20px 16px;
+  min-width: 380px;
+  max-width: 480px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  color: #d4d4d8;
+}
+.modal-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: #f4f4f5;
+}
+.modal-title:empty { display: none; }
+.modal-message {
+  font-size: 12px;
+  color: #a1a1aa;
+  white-space: pre-wrap;
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+.modal-message:empty { display: none; }
+.modal-input {
+  width: 100%;
+  padding: 8px 10px;
+  background: #141418;
+  border: 1px solid #3a3a42;
+  border-radius: 4px;
+  color: #f4f4f5;
+  font-size: 13px;
+  outline: none;
+  box-sizing: border-box;
+}
+.modal-input:focus { border-color: #5b8cff; }
+.modal-input[type="password"] { letter-spacing: 0.2em; }
+.modal-error {
+  margin-top: 8px;
+  font-size: 11px;
+  color: #f87171;
+}
+.modal-actions {
+  display: flex; justify-content: flex-end; gap: 8px;
+  margin-top: 14px;
+}
+.modal-actions button {
+  padding: 6px 14px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  font-size: 12px;
+  cursor: pointer;
+}
+.modal-btn-cancel {
+  background: transparent;
+  border-color: #3a3a42;
+  color: #d4d4d8;
+}
+.modal-btn-cancel:hover { background: #2a2a30; }
+.modal-btn-ok {
+  background: #2563eb;
+  color: #fff;
+  border-color: #2563eb;
+}
+.modal-btn-ok:hover { background: #1d4ed8; }

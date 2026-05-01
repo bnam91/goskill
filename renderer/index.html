@@ -82,6 +82,19 @@
     <span id="status-text">준비</span>
   </footer>
 
+  <div class="modal-backdrop" id="prompt-modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="prompt-modal-title">
+      <div class="modal-title" id="prompt-modal-title"></div>
+      <div class="modal-message" id="prompt-modal-message"></div>
+      <input type="text" class="modal-input" id="prompt-modal-input" autocomplete="off">
+      <div class="modal-error" id="prompt-modal-error" hidden></div>
+      <div class="modal-actions">
+        <button class="modal-btn-cancel" id="prompt-modal-cancel">취소</button>
+        <button class="modal-btn-ok" id="prompt-modal-ok">확인</button>
+      </div>
+    </div>
+  </div>
+
   <script src="renderer.js"></script>
 </body>
 </html>

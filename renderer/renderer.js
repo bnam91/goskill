@@ -62,12 +62,71 @@ let state = {
   uploadTags: new Map(),   // name → tag (업로드 시 분류)
   customTags: new Set(),   // 사용자가 이 세션에 추가한 새 태그 (catalog에 아직 없음)
   prepStatus: new Map(),   // name → boolean (goskill_stage에 heyclaude.md 있는지 = 전처리 완료)
+  publishStatus: {},       // name → 'published' | 'staged' (origin/main에 push됐는지)
   filter:   { local: '',    remote: ''    },
   category: { local: 'all', remote: 'all' },
   groupOverride: new Map(), // groupKey → 'collapsed'|'expanded' (사용자 수동 토글)
 };
 
 function setStatus(text) { els.status.textContent = text; }
+
+// Electron의 window.prompt() 미지원을 우회하는 커스텀 모달.
+// 반환: 입력 문자열 / 취소 시 null.
+// validate: (val) => null|undefined 통과, string 반환 시 에러 메시지 표시.
+function showPrompt({ title = '', message = '', defaultValue = '', placeholder = '', password = false, validate = null } = {}) {
+  return new Promise((resolve) => {
+    const backdrop = document.getElementById('prompt-modal');
+    const titleEl = document.getElementById('prompt-modal-title');
+    const msgEl = document.getElementById('prompt-modal-message');
+    const input = document.getElementById('prompt-modal-input');
+    const errEl = document.getElementById('prompt-modal-error');
+    const okBtn = document.getElementById('prompt-modal-ok');
+    const cancelBtn = document.getElementById('prompt-modal-cancel');
+
+    titleEl.textContent = title;
+    msgEl.textContent = message;
+    input.type = password ? 'password' : 'text';
+    input.placeholder = placeholder;
+    input.value = defaultValue;
+    errEl.textContent = '';
+    errEl.hidden = true;
+    backdrop.hidden = false;
+
+    setTimeout(() => { input.focus(); input.select(); }, 0);
+
+    const cleanup = () => {
+      backdrop.hidden = true;
+      okBtn.removeEventListener('click', onOk);
+      cancelBtn.removeEventListener('click', onCancel);
+      input.removeEventListener('keydown', onKey);
+      backdrop.removeEventListener('click', onBackdrop);
+    };
+    const onOk = () => {
+      const val = input.value;
+      if (validate) {
+        const err = validate(val);
+        if (err) {
+          errEl.textContent = err;
+          errEl.hidden = false;
+          return;
+        }
+      }
+      cleanup();
+      resolve(val);
+    };
+    const onCancel = () => { cleanup(); resolve(null); };
+    const onKey = (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); onOk(); }
+      else if (e.key === 'Escape') { e.preventDefault(); onCancel(); }
+    };
+    const onBackdrop = (e) => { if (e.target === backdrop) onCancel(); };
+
+    okBtn.addEventListener('click', onOk);
+    cancelBtn.addEventListener('click', onCancel);
+    input.addEventListener('keydown', onKey);
+    backdrop.addEventListener('click', onBackdrop);
+  });
+}
 
 // 카탈로그에서 발견된 태그를 양쪽 필터 select에 동적 삽입 (catalog 로드 후 호출)
 function refreshTagFilters() {
@@ -118,17 +177,20 @@ async function load() {
     }
 
     setStatus('스킬 목록 로딩 중...');
-    const [local, remote, catalog] = await Promise.all([
+    const [local, remote, catalog, publish] = await Promise.all([
       window.api.listSkills('local'),
       window.api.listSkills('remote'),
       window.api.readCatalog(),
+      window.api.publishStatus(),
     ]);
     state.local   = local;
     state.remote  = remote;
     state.catalog = catalog;
+    state.publishStatus = publish || {};
 
     refreshTagFilters();
     render();
+    renderStagePanel();
     const shared = countShared();
     setStatus(`LOCAL ${local.items.length} · REMOTE ${remote.items.length} · 공유중 ${shared} · ${pullStatus}`);
   } catch (e) {
@@ -139,17 +201,26 @@ async function load() {
 
 function localNames()  { return new Set(state.local.items.map(i => i.name)); }
 function remoteNames() { return new Set(state.remote.items.map(i => i.name)); }
+function isPublished(name) {
+  return state.publishStatus[name] === 'published';
+}
+
 function countShared() {
   const l = localNames(), r = remoteNames();
   let n = 0;
-  for (const name of l) if (r.has(name)) n++;
+  for (const name of l) {
+    if (r.has(name) && isPublished(name)) n++;
+  }
   return n;
 }
 
 function badge(side, name) {
   const inLocal  = localNames().has(name);
   const inRemote = remoteNames().has(name);
-  if (inLocal && inRemote) return ['★ 공유중', 'badge-shared'];
+  if (inLocal && inRemote) {
+    if (isPublished(name)) return ['★ 공유중', 'badge-shared'];
+    return ['🟡 푸시 대기', 'badge-staged'];
+  }
   if (side === 'local')    return ['개인',     'badge-personal'];
   return ['원격전용', 'badge-remoteonly'];
 }
@@ -448,22 +519,25 @@ function renderStageRows(side, container, stagedSet) {
       sel.appendChild(optNew);
 
       sel.value = current || '';
-      sel.addEventListener('change', () => {
+      sel.addEventListener('change', async () => {
         if (sel.value === '__new__') {
-          const input = prompt(
-            '새 태그 이름을 입력하세요\n(예: coupang, notion, figma, dev, pm)\n공백·구분자 없이 짧게.',
-            ''
-          );
-          const tag = (input || '').trim();
-          if (!tag) {
+          const input = await showPrompt({
+            title: '새 태그 추가',
+            message: '예: coupang, notion, figma, dev, pm\n공백·구분자 없이 짧게 (30자 이하)',
+            placeholder: '태그 이름',
+            validate: (val) => {
+              const t = (val || '').trim();
+              if (!t) return '태그 이름을 입력하세요.';
+              if (t.length > 30) return '30자 이하로 입력하세요.';
+              if (/[\s\/\\:,;|]/.test(t)) return '공백/구분자(/ \\ : , ; |) 사용 불가.';
+              return null;
+            },
+          });
+          if (input === null) {
             sel.value = current || '';
             return;
           }
-          if (tag.length > 30 || /[\s\/\\:,;|]/.test(tag)) {
-            alert('태그 이름이 부적절합니다 (공백/구분자 금지, 30자 이하).');
-            sel.value = current || '';
-            return;
-          }
+          const tag = input.trim();
           state.customTags.add(tag);
           state.uploadTags.set(name, tag);
           // 모든 LOCAL stage 행을 다시 그려서 새 태그가 다른 셀렉트에도 노출되게 함
@@ -814,7 +888,11 @@ async function handleDelete() {
   );
   if (!ok) return;
 
-  const pw = prompt('🔒 삭제 비밀번호를 입력하세요');
+  const pw = await showPrompt({
+    title: '🔒 삭제 비밀번호',
+    message: '비밀번호를 입력하세요',
+    password: true,
+  });
   if (pw === null) return;
   if (pw !== '0000') {
     alert('❌ 비밀번호가 일치하지 않습니다. 삭제 취소됨.');

@@ -324,11 +324,66 @@ async function readCatalog() {
   }
 }
 
+// REMOTE의 각 스킬 폴더가 origin/main에 publish됐는지 판정.
+// 반환: { name: 'published' | 'staged' }
+//   - 'published': origin/main 트리에 폴더가 있고, 워킹트리에 변경 없음
+//   - 'staged'   : 새로 추가/수정/untracked 상태 (직원이 받을 수 없음)
+async function getPublishStatusMap() {
+  const cwd = SIDES.remote.path;
+  const gitDir = path.join(cwd, '.git');
+  const result = {};
+  try {
+    await fs.access(gitDir);
+  } catch {
+    // git repo 아님 → 모두 published 취급 (구분 의미 없음)
+    return result;
+  }
+
+  // origin/main 트리에 존재하는 최상위 디렉터리 목록
+  let originDirs = new Set();
+  try {
+    const { stdout } = await execFileP('git', ['-C', cwd, 'ls-tree', '-d', '--name-only', 'origin/main'], { timeout: 5000 });
+    for (const line of stdout.split('\n')) {
+      const t = line.trim();
+      if (t) originDirs.add(t);
+    }
+  } catch (e) {
+    // origin/main 없거나 fetch 안 된 상태 등
+  }
+
+  // 워킹트리 변경 상태 — 변경된 최상위 디렉터리 목록
+  let dirtyDirs = new Set();
+  try {
+    const { stdout } = await execFileP('git', ['-C', cwd, 'status', '--porcelain'], { timeout: 5000 });
+    for (const line of stdout.split('\n')) {
+      const m = line.match(/^.{2}\s+"?([^/"]+)/);
+      if (m) dirtyDirs.add(m[1]);
+    }
+  } catch (e) {}
+
+  // 모든 REMOTE 디렉터리 순회 (skills-list.json 같은 파일 제외)
+  let entries = [];
+  try {
+    entries = await fs.readdir(cwd, { withFileTypes: true });
+  } catch (e) {
+    return result;
+  }
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    if (e.name.startsWith('.')) continue;
+    const inOrigin = originDirs.has(e.name);
+    const dirty = dirtyDirs.has(e.name);
+    result[e.name] = (inOrigin && !dirty) ? 'published' : 'staged';
+  }
+  return result;
+}
+
 app.whenReady().then(() => {
   ipcMain.handle('skills:list',   (_, args) => listSkills(args.side));
   ipcMain.handle('skills:read',   (_, args) => readSkill(args));
   ipcMain.handle('skills:delete', (_, args) => deleteSkill(args));
   ipcMain.handle('catalog:read',  () => readCatalog());
+  ipcMain.handle('publish:status', () => getPublishStatusMap());
   ipcMain.handle('git:pull',      () => gitPullRemote());
   ipcMain.handle('skills:download', (_, args) => downloadSkill(args));
   ipcMain.handle('skills:upload',   (_, args) => uploadSkill(args));
