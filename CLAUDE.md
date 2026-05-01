@@ -67,7 +67,7 @@ GitHub: https://github.com/bnam91/goskill
 ## 실행
 
 ```bash
-cd ~/goskill
+cd ~/github/goskill
 npm install      # 최초 1회, electron 다운로드 (~200MB)
 npm start        # CDP 포트 9344로 실행
 ```
