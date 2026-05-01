@@ -163,6 +163,71 @@ async function deleteSkill({ side, name }) {
   return { deleted: name, path: resolved };
 }
 
+async function uploadSkill({ name, tag }) {
+  if (!name || typeof name !== 'string' || name.includes('/') || name.includes('..') || name.startsWith('.')) {
+    throw new Error(`잘못된 스킬 이름: ${name}`);
+  }
+  const src = path.join(SIDES.local.path, name);
+  const dst = path.join(SIDES.remote.path, name);
+
+  const srcStat = await fs.stat(src).catch(() => null);
+  if (!srcStat || !srcStat.isDirectory()) {
+    throw new Error(`LOCAL에 ${name} 폴더 없음`);
+  }
+
+  const dstStat = await fs.lstat(dst).catch(() => null);
+  if (dstStat) {
+    return { ok: false, conflict: true, name };
+  }
+
+  // 1) 폴더 복사
+  await fs.cp(src, dst, { recursive: true });
+
+  // 2) skills-list.json 업데이트 (있으면 갱신, 없으면 생성)
+  const catalogPath = path.join(SIDES.remote.path, 'skills-list.json');
+  let catalog;
+  try {
+    const buf = await fs.readFile(catalogPath, 'utf8');
+    catalog = JSON.parse(buf);
+  } catch {
+    catalog = { version: 2, _comment: '공용 스킬 카탈로그. 한 스킬당 tag 1개.', skills: {} };
+  }
+  catalog.skills = catalog.skills || {};
+
+  // SKILL.md frontmatter에서 description 추출 시도
+  let description = '';
+  try {
+    const skillMd = await fs.readFile(path.join(src, 'SKILL.md'), 'utf8');
+    const m = skillMd.match(/^---[\s\S]*?\ndescription:\s*(.+?)(?:\n|$)/);
+    if (m) description = m[1].trim().replace(/^["']|["']$/g, '');
+  } catch {}
+
+  catalog.skills[name] = {
+    description,
+    ...(tag ? { tag } : {}),
+  };
+  await fs.writeFile(catalogPath, JSON.stringify(catalog, null, 2) + '\n', 'utf8');
+
+  return { ok: true, name, path: dst, tag: tag || null };
+}
+
+async function gitCommitAndPushRemote(message) {
+  const cwd = SIDES.remote.path;
+  try {
+    await execFileP('git', ['-C', cwd, 'add', '-A'], { timeout: 15000 });
+    await execFileP('git', ['-C', cwd, 'commit', '-m', message], { timeout: 15000 });
+    const { stdout, stderr } = await execFileP('git', ['-C', cwd, 'push'], { timeout: 30000 });
+    return { ok: true, output: (stdout + stderr).trim() };
+  } catch (e) {
+    const msg = e.message || '';
+    // commit "nothing to commit"은 에러 아님
+    if (/nothing to commit|작업할 사항 없음/i.test(msg) || /nothing to commit/i.test(e.stdout || '') || /nothing to commit/i.test(e.stderr || '')) {
+      return { ok: true, output: '변경사항 없음 (skip)' };
+    }
+    return { ok: false, error: msg, output: ((e.stdout || '') + (e.stderr || '')).trim() };
+  }
+}
+
 async function downloadSkill({ name }) {
   if (!name || typeof name !== 'string' || name.includes('/') || name.includes('..') || name.startsWith('.')) {
     throw new Error(`잘못된 스킬 이름: ${name}`);
@@ -220,6 +285,8 @@ app.whenReady().then(() => {
   ipcMain.handle('catalog:read',  () => readCatalog());
   ipcMain.handle('git:pull',      () => gitPullRemote());
   ipcMain.handle('skills:download', (_, args) => downloadSkill(args));
+  ipcMain.handle('skills:upload',   (_, args) => uploadSkill(args));
+  ipcMain.handle('git:commit-push', (_, message) => gitCommitAndPushRemote(String(message || 'feat: goskill 업로드')));
   ipcMain.handle('clipboard:write', (_, text) => clipboard.writeText(String(text || '')));
   ipcMain.handle('sides:info',    () => ({
     local:  { label: SIDES.local.label,  path: SIDES.local.path },

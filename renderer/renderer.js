@@ -489,14 +489,84 @@ function escapeHtml(s) {
   }[c]));
 }
 
-function handleUpload() {
+async function handleUpload() {
   const names = [...state.stagedLocal];
   if (!names.length) return;
-  const list = names.map(n => {
-    const d = state.uploadTags.get(n) || '(분류 없음)';
-    return ` • ${n}  →  ${d}`;
+
+  // 사전 충돌 검사 (REMOTE에 같은 이름 있는지)
+  const rNames = remoteNames();
+  const conflicts = names.filter(n => rNames.has(n));
+  const ready     = names.filter(n => !rNames.has(n));
+
+  // 충돌 → 알럿 + 클립보드 자동 복사 (해당 스킬은 업로드 안 함)
+  if (conflicts.length) {
+    const promptText = `${conflicts.join(', ')}을(를) goskill_stage에 업로드하려는데 이미 같은 이름이 있습니다. 충돌이 걱정되는데 문제없게 올려주세요. 확인이 필요하다면 먼저 물어주세요.`;
+
+    try { await window.api.clipboardWrite(promptText); } catch {}
+
+    const conflictList = conflicts.map(n => ` • ${n}`).join('\n');
+    alert(
+      `⚠️ 충돌 감지\n\n` +
+      `${conflictList}\n\n` +
+      `이미 REMOTE(goskill_stage)에 같은 이름이 있어 업로드를 건너뜁니다.\n` +
+      `Claude Code에 전달할 프롬프트가 클립보드에 복사됐습니다.\n\n` +
+      `--- 클립보드 내용 ---\n${promptText}`
+    );
+  }
+
+  if (ready.length === 0) {
+    setStatus('업로드 건너뜀 (모든 항목 충돌)');
+    return;
+  }
+
+  // 업로드 전 미리보기 (태그 정보 포함)
+  const previewList = ready.map(n => {
+    const t = state.uploadTags.get(n) || '(분류 없음)';
+    return ` • ${n}  →  태그: ${t}`;
   }).join('\n');
-  alert(`📤 업로드 예정 (LOCAL → REMOTE)\n\n${list}\n\n⚠️ 실제 업로드 기능은 아직 구현 전입니다. (UI 스테이지 확인용)`);
+  if (!confirm(`📤 업로드 시작 (LOCAL → REMOTE → GitHub push)\n\n${previewList}\n\n진행할까요?`)) {
+    setStatus('업로드 취소됨');
+    return;
+  }
+
+  // 1) 파일 복사 + skills-list.json 갱신
+  setStatus(`업로드 중... (${ready.length}개)`);
+  let success = 0, failed = 0;
+  const errors = [];
+  const uploaded = [];
+  for (const name of ready) {
+    try {
+      const tag = state.uploadTags.get(name) || '';
+      const r = await window.api.uploadSkill(name, tag);
+      if (r.ok) { success++; uploaded.push(name); }
+      else { failed++; errors.push(`${name}: ${r.conflict ? '충돌' : '실패'}`); }
+    } catch (e) {
+      failed++;
+      errors.push(`${name}: ${e.message}`);
+    }
+  }
+
+  // 2) git commit + push
+  let pushResult = { ok: false };
+  if (success > 0) {
+    setStatus(`git commit + push 중...`);
+    const message = `feat: 스킬 ${success}개 업로드 (${uploaded.join(', ')})`;
+    pushResult = await window.api.gitCommitPush(message);
+    if (!pushResult.ok) console.warn('push 실패:', pushResult.error, pushResult.output);
+  }
+
+  // 3) 결과 보고
+  alert(
+    `📤 업로드 결과\n\n` +
+    `복사 성공 ${success}개 · 실패 ${failed}개${conflicts.length ? ` · 충돌 ${conflicts.length}개(건너뜀)` : ''}\n` +
+    (success > 0 ? `\n${pushResult.ok ? '✅ GitHub push 완료' : '⚠️ push 실패: ' + (pushResult.error || '알 수 없음')}` : '') +
+    (errors.length ? `\n\n실패 항목:\n${errors.map(e => ` • ${e}`).join('\n')}` : '')
+  );
+
+  // 스테이징 비우고 새로고침
+  state.stagedLocal.clear();
+  state.uploadTags.clear();
+  await load();
 }
 
 async function handleDownload() {
