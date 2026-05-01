@@ -22,6 +22,7 @@ const els = {
   searchRemote:    document.getElementById('search-remote'),
   filterLocal:     document.getElementById('filter-local'),
   filterRemote:    document.getElementById('filter-remote'),
+  btnHeyclaudePrompt: document.getElementById('btn-heyclaude-prompt'),
 };
 
 // catalog에서 사용된 모든 태그를 동적으로 수집 (정렬: onboarding 우선 → 알파벳)
@@ -489,11 +490,57 @@ function escapeHtml(s) {
   }[c]));
 }
 
+async function handleHeyclaudePrompt() {
+  const names = [...state.stagedLocal];
+  if (!names.length) {
+    alert('업로드 대기 영역에 스킬을 먼저 추가하세요.');
+    return;
+  }
+
+  const items = names.map(n => {
+    const t = state.uploadTags.get(n) || '미지정';
+    return ` • ${n} (태그: ${t})`;
+  }).join('\n');
+
+  const promptText =
+    `goskill_stage에 업로드 대기 중인 스킬을 직원 공유 전 점검해줘:\n\n` +
+    `${items}\n\n` +
+    `/goskill-heyclaude 메타 스킬을 사용해서 각 스킬을 점검해주고:\n` +
+    `1. 외부 의존성, 개인정보 노출, 변수화 가능 부분 등 분석 보고\n` +
+    `2. 각 스킬 폴더(~/.claude/skills/<스킬명>/)에 heyclaude.md를 생성하거나 갱신\n` +
+    `3. 문제 있으면 업로드 전 알려줘\n\n` +
+    `※ heyclaude.md가 없으면 goskill 앱에서 업로드가 차단됩니다. 모든 스킬에 heyclaude.md가 준비되어야 업로드 진행 가능.`;
+
+  try { await window.api.clipboardWrite(promptText); } catch {}
+
+  alert(
+    `📋 검수 의뢰 프롬프트가 클립보드에 복사됐습니다.\n` +
+    `Claude Code에 붙여넣어 점검을 요청하세요.\n\n` +
+    `--- 클립보드 내용 ---\n${promptText}`
+  );
+}
+
 async function handleUpload() {
   const names = [...state.stagedLocal];
   if (!names.length) return;
 
-  // 사전 충돌 검사 (REMOTE에 같은 이름 있는지)
+  // 사전 검증 1: heyclaude.md 존재 (없으면 업로드 차단)
+  const noHeyclaude = [];
+  for (const n of names) {
+    const has = await window.api.hasSkillFile('local', n, 'heyclaude.md');
+    if (!has) noHeyclaude.push(n);
+  }
+  if (noHeyclaude.length) {
+    alert(
+      `⚠️ heyclaude.md 누락 — 업로드 차단\n\n` +
+      `${noHeyclaude.map(n => ' • ' + n).join('\n')}\n\n` +
+      `직원의 Claude Code가 환경 세팅을 못 하는 상태로 업로드되면 안 됩니다.\n` +
+      `먼저 "🔍 검수 의뢰" 버튼을 눌러 점검 + heyclaude.md 생성 후 업로드하세요.`
+    );
+    return;
+  }
+
+  // 사전 검증 2: 충돌 검사 (REMOTE에 같은 이름 있는지)
   const rNames = remoteNames();
   const conflicts = names.filter(n => rNames.has(n));
   const ready     = names.filter(n => !rNames.has(n));
@@ -666,6 +713,7 @@ async function handleDelete() {
 
 els.refresh.addEventListener('click', load);
 els.btnExecUpload.addEventListener('click', handleUpload);
+els.btnHeyclaudePrompt.addEventListener('click', handleHeyclaudePrompt);
 els.btnExecDownload.addEventListener('click', handleDownload);
 els.btnExecDelete.addEventListener('click', handleDelete);
 els.searchLocal.addEventListener('input',  (e) => { state.filter.local  = e.target.value; renderList('local');  });

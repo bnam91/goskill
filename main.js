@@ -163,6 +163,13 @@ async function deleteSkill({ side, name }) {
   return { deleted: name, path: resolved };
 }
 
+async function hasSkillFile({ side, name, file }) {
+  const base = SIDES[side]?.path;
+  if (!base) throw new Error(`unknown side: ${side}`);
+  const p = path.join(base, name, file);
+  try { await fs.access(p); return true; } catch { return false; }
+}
+
 async function uploadSkill({ name, tag }) {
   if (!name || typeof name !== 'string' || name.includes('/') || name.includes('..') || name.startsWith('.')) {
     throw new Error(`잘못된 스킬 이름: ${name}`);
@@ -286,6 +293,7 @@ app.whenReady().then(() => {
   ipcMain.handle('git:pull',      () => gitPullRemote());
   ipcMain.handle('skills:download', (_, args) => downloadSkill(args));
   ipcMain.handle('skills:upload',   (_, args) => uploadSkill(args));
+  ipcMain.handle('skills:hasFile',  (_, args) => hasSkillFile(args));
   ipcMain.handle('git:commit-push', (_, message) => gitCommitAndPushRemote(String(message || 'feat: goskill 업로드')));
   ipcMain.handle('clipboard:write', (_, text) => clipboard.writeText(String(text || '')));
   ipcMain.handle('sides:info',    () => ({

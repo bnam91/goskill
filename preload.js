@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('api', {
   gitPull:     ()            => ipcRenderer.invoke('git:pull'),
   downloadSkill: (name)      => ipcRenderer.invoke('skills:download', { name }),
   uploadSkill: (name, tag)   => ipcRenderer.invoke('skills:upload', { name, tag }),
+  hasSkillFile: (side, name, file) => ipcRenderer.invoke('skills:hasFile', { side, name, file }),
   gitCommitPush: (message)   => ipcRenderer.invoke('git:commit-push', message),
   clipboardWrite: (text)     => ipcRenderer.invoke('clipboard:write', text),
 });
