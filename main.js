@@ -163,6 +163,23 @@ async function deleteSkill({ side, name }) {
   return { deleted: name, path: resolved };
 }
 
+async function getAppVersion() {
+  // VERSION.txt 우선 (자동업데이트가 갱신)
+  try {
+    const buf = await fs.readFile(path.join(__dirname, 'VERSION.txt'), 'utf8');
+    const info = JSON.parse(buf);
+    if (info.tag_name) return info.tag_name;
+  } catch {}
+  // fallback: package.json
+  try {
+    const buf = await fs.readFile(path.join(__dirname, 'package.json'), 'utf8');
+    const pkg = JSON.parse(buf);
+    return 'v' + pkg.version;
+  } catch {
+    return 'unknown';
+  }
+}
+
 async function hasSkillFile({ side, name, file }) {
   const base = SIDES[side]?.path;
   if (!base) throw new Error(`unknown side: ${side}`);
@@ -294,6 +311,7 @@ app.whenReady().then(() => {
   ipcMain.handle('skills:download', (_, args) => downloadSkill(args));
   ipcMain.handle('skills:upload',   (_, args) => uploadSkill(args));
   ipcMain.handle('skills:hasFile',  (_, args) => hasSkillFile(args));
+  ipcMain.handle('app:version',     () => getAppVersion());
   ipcMain.handle('git:commit-push', (_, message) => gitCommitAndPushRemote(String(message || 'feat: goskill 업로드')));
   ipcMain.handle('clipboard:write', (_, text) => clipboard.writeText(String(text || '')));
   ipcMain.handle('sides:info',    () => ({

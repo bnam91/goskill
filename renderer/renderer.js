@@ -23,7 +23,18 @@ const els = {
   filterLocal:     document.getElementById('filter-local'),
   filterRemote:    document.getElementById('filter-remote'),
   btnHeyclaudePrompt: document.getElementById('btn-heyclaude-prompt'),
+  appVersion:      document.getElementById('app-version'),
 };
+
+// 앱 시작 시 버전 표시
+(async () => {
+  try {
+    const v = await window.api.appVersion();
+    if (els.appVersion) els.appVersion.textContent = v;
+  } catch {
+    if (els.appVersion) els.appVersion.textContent = '';
+  }
+})();
 
 // catalog에서 사용된 모든 태그를 동적으로 수집 (정렬: onboarding 우선 → 알파벳)
 function getTagKeys() {
