@@ -132,9 +132,20 @@ class ReleaseUpdater {
             // Git으로 최신 릴리즈 태그 체크아웃
             console.log(`${repoLabel} 🔄 Git 태그 가져오는 중...`);
             await this.executeCommand('git fetch --tags');
-            
-            console.log(`${repoLabel} 🔄 버전 ${releaseInfo.tag_name}으로 체크아웃 중...`);
-            await this.executeCommand(`git checkout ${releaseInfo.tag_name}`);
+
+            // detached HEAD 방지: main 브랜치 유지하면서 태그 위치로 이동
+            // 1) main 브랜치로 전환 (이미 main이면 no-op, detached면 복구)
+            console.log(`${repoLabel} 🔄 main 브랜치로 전환...`);
+            try {
+                await this.executeCommand('git checkout main');
+            } catch (e) {
+                // main 브랜치가 없으면 origin/main 추적 브랜치로 생성
+                await this.executeCommand('git checkout -B main origin/main');
+            }
+
+            // 2) main을 태그 위치로 hard reset (사용자 로컬 변경 덮어쓰기 주의)
+            console.log(`${repoLabel} 🔄 버전 ${releaseInfo.tag_name}으로 reset 중...`);
+            await this.executeCommand(`git reset --hard ${releaseInfo.tag_name}`);
 
             // 버전 정보 저장
             this.saveVersionInfo(releaseInfo);
