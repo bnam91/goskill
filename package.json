@@ -5,10 +5,12 @@
   "description": "고야 스킬 선택적 배포 시스템 GUI 뷰어 (개인 ↔ 공용 스킬 비교 및 다운로드)",
   "main": "main.js",
   "scripts": {
-    "start": "electron . --remote-debugging-port=9344"
+    "start": "electron . --remote-debugging-port=9344",
+    "dev": "NODE_ENV=development electron . --remote-debugging-port=9344"
   },
   "devDependencies": {
-    "electron": "^33.0.0"
+    "electron": "^33.0.0",
+    "electron-reloader": "^1.2.3"
   },
   "dependencies": {
     "axios": "^1.15.2",

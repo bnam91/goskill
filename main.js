@@ -6,6 +6,18 @@ const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const execFileP = promisify(execFile);
 
+// 개발 모드일 때만 핫 리로드 (npm run dev로 실행 시)
+if (process.env.NODE_ENV === 'development') {
+  try {
+    require('electron-reloader')(module, {
+      ignore: ['VERSION.txt', '.git', 'node_modules'],
+    });
+    console.log('🔥 핫 리로드 활성화');
+  } catch (e) {
+    console.warn('electron-reloader 로드 실패:', e.message);
+  }
+}
+
 const HOME = os.homedir();
 const SIDES = {
   local:  { label: 'LOCAL (내 스킬)',      path: path.join(HOME, '.claude', 'skills') },
