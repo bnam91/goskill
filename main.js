@@ -1,12 +1,15 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const os = require('node:os');
+const { execFile } = require('node:child_process');
+const { promisify } = require('node:util');
+const execFileP = promisify(execFile);
 
 const HOME = os.homedir();
 const SIDES = {
   local:  { label: 'LOCAL (내 스킬)',      path: path.join(HOME, '.claude', 'skills') },
-  remote: { label: 'REMOTE (공용 레포)',    path: path.join(HOME, 'claude_skills') },
+  remote: { label: 'REMOTE (goskill_stage)', path: path.join(HOME, 'goskill_stage') },
 };
 
 function createWindow() {
@@ -21,6 +24,49 @@ function createWindow() {
     },
   });
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  return win;
+}
+
+async function checkForUpdates(mainWindow) {
+  try {
+    // ESM 모듈을 CommonJS에서 동적 로드
+    const updaterModule = await import('./submodules/module_update_auto/release_updater.js');
+    const configModule  = await import('./submodules/module_update_auto/config.js');
+    const ReleaseUpdater = updaterModule.default;
+    const updateConfig   = configModule.default;
+
+    const updater = new ReleaseUpdater('bnam91', 'goskill', updateConfig.versionFile);
+    const current = updater.getCurrentVersion();
+    const latest  = await updater.getLatestRelease();
+    if (!latest || current === latest.tag_name) return;
+
+    const { response } = await dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      title: 'goskill 업데이트 알림',
+      message: `새 버전이 있습니다: ${latest.tag_name}`,
+      detail: `현재: ${current ?? '없음'}\n\n업데이트 후 앱을 재시작하세요.`,
+      buttons: ['지금 업데이트', '나중에'],
+      defaultId: 0,
+    });
+
+    if (response === 0) {
+      await updater.performUpdate(latest);
+      const { response: restartRes } = await dialog.showMessageBox(mainWindow, {
+        type: 'info',
+        title: '업데이트 완료',
+        message: `${latest.tag_name} 업데이트가 완료됐습니다.`,
+        detail: '지금 앱을 재시작할까요?',
+        buttons: ['지금 재시작', '나중에'],
+        defaultId: 0,
+      });
+      if (restartRes === 0) {
+        app.relaunch();
+        app.exit(0);
+      }
+    }
+  } catch (e) {
+    console.error('업데이트 체크 오류:', e.message);
+  }
 }
 
 async function listSkills(side) {
@@ -114,6 +160,22 @@ async function deleteSkill({ side, name }) {
   return { deleted: name, path: resolved };
 }
 
+async function gitPullRemote() {
+  const cwd = SIDES.remote.path;
+  const gitDir = path.join(cwd, '.git');
+  try {
+    await fs.access(gitDir);
+  } catch {
+    return { ok: false, skipped: true, message: 'REMOTE 폴더가 git 레포가 아님 (.git 없음)' };
+  }
+  try {
+    const { stdout, stderr } = await execFileP('git', ['-C', cwd, 'pull', '--ff-only'], { timeout: 15000 });
+    return { ok: true, output: (stdout + stderr).trim() };
+  } catch (e) {
+    return { ok: false, error: e.message, output: ((e.stdout || '') + (e.stderr || '')).trim() };
+  }
+}
+
 async function readCatalog() {
   const p = path.join(SIDES.remote.path, 'skills-list.json');
   try {
@@ -129,11 +191,13 @@ app.whenReady().then(() => {
   ipcMain.handle('skills:read',   (_, args) => readSkill(args));
   ipcMain.handle('skills:delete', (_, args) => deleteSkill(args));
   ipcMain.handle('catalog:read',  () => readCatalog());
+  ipcMain.handle('git:pull',      () => gitPullRemote());
   ipcMain.handle('sides:info',    () => ({
     local:  { label: SIDES.local.label,  path: SIDES.local.path },
     remote: { label: SIDES.remote.label, path: SIDES.remote.path },
   }));
-  createWindow();
+  const mainWindow = createWindow();
+  checkForUpdates(mainWindow);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

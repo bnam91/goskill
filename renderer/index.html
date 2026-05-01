@@ -47,11 +47,8 @@
         <select class="pane-filter" id="filter-remote" title="카테고리 필터">
           <option value="all">전체</option>
           <option value="shared">★ 공유중</option>
-          <option value="depth01">📦 원격 · depth01</option>
-          <option value="depth02">📦 원격 · depth02</option>
-          <option value="depth03">📦 원격 · depth03</option>
-          <option value="depth04">📦 원격 · depth04</option>
-          <option value="nodepth">📦 원격 · 분류 없음</option>
+          <!-- 태그별 옵션은 renderer.js가 동적으로 채움 -->
+          <option value="notag">📦 원격 · 분류 없음</option>
         </select>
       </header>
       <ul class="skill-list" id="list-remote"></ul>
@@ -66,11 +63,8 @@
         <select class="pane-filter" id="filter-local" title="카테고리 필터">
           <option value="all">전체</option>
           <option value="shared">★ 공유중 (모두)</option>
-          <option value="shared_depth01">★ 공유중 · depth01</option>
-          <option value="shared_depth02">★ 공유중 · depth02</option>
-          <option value="shared_depth03">★ 공유중 · depth03</option>
-          <option value="shared_depth04">★ 공유중 · depth04</option>
-          <option value="shared_nodepth">★ 공유중 · 분류 없음</option>
+          <!-- 태그별 ★ 공유중 옵션은 renderer.js가 동적으로 채움 -->
+          <option value="shared_notag">★ 공유중 · 분류 없음</option>
           <option value="personal">🔒 개인</option>
         </select>
       </header>

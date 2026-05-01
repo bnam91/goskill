@@ -24,16 +24,29 @@ const els = {
   filterRemote:    document.getElementById('filter-remote'),
 };
 
-const DEPTH_KEYS = ['depth01', 'depth02', 'depth03', 'depth04'];
+// catalog에서 사용된 모든 태그를 동적으로 수집 (정렬: onboarding 우선 → 알파벳)
+function getTagKeys() {
+  const set = new Set();
+  for (const info of Object.values(state.catalog?.skills || {})) {
+    if (info?.tag) set.add(info.tag);
+  }
+  const arr = [...set];
+  arr.sort((a, b) => {
+    if (a === 'onboarding') return -1;
+    if (b === 'onboarding') return 1;
+    return a.localeCompare(b);
+  });
+  return arr;
+}
 
 let state = {
   local:  { items: [] },
   remote: { items: [] },
-  catalog: { depths: {}, skills: {} },
+  catalog: { skills: {} },
   selected: null, // { side, name }
   stagedLocal:  new Set(), // 업로드 후보 (LOCAL → REMOTE)
   stagedRemote: new Set(), // 다운받기 후보 (REMOTE → LOCAL)
-  uploadDepths: new Map(), // name → depth (업로드 시 분류)
+  uploadTags: new Map(),   // name → tag (업로드 시 분류)
   filter:   { local: '',    remote: ''    },
   category: { local: 'all', remote: 'all' },
   groupOverride: new Map(), // groupKey → 'collapsed'|'expanded' (사용자 수동 토글)
@@ -41,13 +54,55 @@ let state = {
 
 function setStatus(text) { els.status.textContent = text; }
 
+// 카탈로그에서 발견된 태그를 양쪽 필터 select에 동적 삽입 (catalog 로드 후 호출)
+function refreshTagFilters() {
+  const tagKeys = getTagKeys();
+
+  // REMOTE 필터: all, shared, [태그들...], notag
+  const remoteCurrent = els.filterRemote.value;
+  els.filterRemote.innerHTML = '';
+  const addOpt = (sel, value, text) => {
+    const o = document.createElement('option');
+    o.value = value; o.textContent = text;
+    sel.appendChild(o);
+  };
+  addOpt(els.filterRemote, 'all', '전체');
+  addOpt(els.filterRemote, 'shared', '★ 공유중');
+  for (const tk of tagKeys) addOpt(els.filterRemote, tk, `📦 원격 · ${tk}`);
+  addOpt(els.filterRemote, 'notag', '📦 원격 · 분류 없음');
+  els.filterRemote.value = [...els.filterRemote.options].some(o => o.value === remoteCurrent) ? remoteCurrent : 'all';
+
+  // LOCAL 필터: all, shared, [shared_태그들...], shared_notag, personal
+  const localCurrent = els.filterLocal.value;
+  els.filterLocal.innerHTML = '';
+  addOpt(els.filterLocal, 'all', '전체');
+  addOpt(els.filterLocal, 'shared', '★ 공유중 (모두)');
+  for (const tk of tagKeys) addOpt(els.filterLocal, `shared_${tk}`, `★ 공유중 · ${tk}`);
+  addOpt(els.filterLocal, 'shared_notag', '★ 공유중 · 분류 없음');
+  addOpt(els.filterLocal, 'personal', '🔒 개인');
+  els.filterLocal.value = [...els.filterLocal.options].some(o => o.value === localCurrent) ? localCurrent : 'all';
+}
+
 async function load() {
-  setStatus('로딩 중...');
+  setStatus('REMOTE git pull 중...');
+  let pullStatus = '';
   try {
     const sides = await window.api.sidesInfo();
     els.pathLocal.textContent  = sides.local.path;
     els.pathRemote.textContent = sides.remote.path;
 
+    const pull = await window.api.gitPull();
+    if (pull.ok) {
+      const upToDate = /Already up to date/i.test(pull.output);
+      pullStatus = upToDate ? '✓ 최신' : '✓ pull 완료';
+    } else if (pull.skipped) {
+      pullStatus = '⚠ git 아님';
+    } else {
+      pullStatus = '⚠ pull 실패';
+      console.warn('git pull 실패:', pull.error, pull.output);
+    }
+
+    setStatus('스킬 목록 로딩 중...');
     const [local, remote, catalog] = await Promise.all([
       window.api.listSkills('local'),
       window.api.listSkills('remote'),
@@ -57,9 +112,10 @@ async function load() {
     state.remote  = remote;
     state.catalog = catalog;
 
+    refreshTagFilters();
     render();
     const shared = countShared();
-    setStatus(`LOCAL ${local.items.length} · REMOTE ${remote.items.length} · 공유중 ${shared}`);
+    setStatus(`LOCAL ${local.items.length} · REMOTE ${remote.items.length} · 공유중 ${shared} · ${pullStatus}`);
   } catch (e) {
     setStatus(`에러: ${e.message}`);
     console.error(e);
@@ -83,10 +139,10 @@ function badge(side, name) {
   return ['원격전용', 'badge-remoteonly'];
 }
 
-function depthLabel(name) {
+function tagLabel(name) {
   const info = state.catalog?.skills?.[name];
-  if (!info || !info.depth) return null;
-  return info.depth;
+  if (!info || !info.tag) return null;
+  return info.tag;
 }
 
 function stagedSet(side) {
@@ -122,30 +178,34 @@ function renderList(side) {
 
   const cat = state.category[side];
 
+  const tagKeys = getTagKeys();
+
   if (side === 'local') {
     const rNames = remoteNames();
     const shared   = items.filter(i =>  rNames.has(i.name));
     const personal = items.filter(i => !rNames.has(i.name));
 
-    const sharedByDepth = { depth01: [], depth02: [], depth03: [], depth04: [], none: [] };
+    const sharedByTag = {};
+    for (const tk of tagKeys) sharedByTag[tk] = [];
+    sharedByTag.none = [];
     for (const item of shared) {
-      const d = depthLabel(item.name);
-      if (d && sharedByDepth[d]) sharedByDepth[d].push(item);
-      else sharedByDepth.none.push(item);
+      const t = tagLabel(item.name);
+      if (t && sharedByTag[t]) sharedByTag[t].push(item);
+      else sharedByTag.none.push(item);
     }
 
     if (cat === 'all' || cat === 'shared') {
-      for (const dk of DEPTH_KEYS) {
-        const sub = state.catalog.depths?.[dk] || '';
-        appendGroup(listEl, side, staged, `★ 공유중 · ${dk}`, sub, sharedByDepth[dk]);
+      for (const tk of tagKeys) {
+        appendGroup(listEl, side, staged, `★ 공유중 · ${tk}`, '', sharedByTag[tk]);
       }
-      appendGroup(listEl, side, staged, `★ 공유중 · 분류 없음`, 'depth 미지정', sharedByDepth.none);
-    } else if (cat.startsWith('shared_depth')) {
-      const dk = cat.replace('shared_', '');
-      const sub = state.catalog.depths?.[dk] || '';
-      appendGroup(listEl, side, staged, `★ 공유중 · ${dk}`, sub, sharedByDepth[dk] || []);
-    } else if (cat === 'shared_nodepth') {
-      appendGroup(listEl, side, staged, `★ 공유중 · 분류 없음`, 'depth 미지정', sharedByDepth.none);
+      appendGroup(listEl, side, staged, `★ 공유중 · 분류 없음`, '태그 미지정', sharedByTag.none);
+    } else if (cat.startsWith('shared_')) {
+      const tk = cat.replace('shared_', '');
+      if (tk === 'notag') {
+        appendGroup(listEl, side, staged, `★ 공유중 · 분류 없음`, '태그 미지정', sharedByTag.none);
+      } else {
+        appendGroup(listEl, side, staged, `★ 공유중 · ${tk}`, '', sharedByTag[tk] || []);
+      }
     }
 
     if (cat === 'all' || cat === 'personal') {
@@ -156,27 +216,27 @@ function renderList(side) {
     const shared     = items.filter(i =>  lNames.has(i.name));
     const remoteOnly = items.filter(i => !lNames.has(i.name));
 
-    const byDepth = { depth01: [], depth02: [], depth03: [], depth04: [], none: [] };
+    const byTag = {};
+    for (const tk of tagKeys) byTag[tk] = [];
+    byTag.none = [];
     for (const item of remoteOnly) {
-      const d = depthLabel(item.name);
-      if (d && byDepth[d]) byDepth[d].push(item);
-      else byDepth.none.push(item);
+      const t = tagLabel(item.name);
+      if (t && byTag[t]) byTag[t].push(item);
+      else byTag.none.push(item);
     }
 
     if (cat === 'all' || cat === 'shared') {
       appendGroup(listEl, side, staged, `★ 공유중`, '내 맥에도 있음', shared);
     }
     if (cat === 'all') {
-      for (const dk of DEPTH_KEYS) {
-        const sub = state.catalog.depths?.[dk] || '';
-        appendGroup(listEl, side, staged, `📦 원격전용 · ${dk}`, sub, byDepth[dk]);
+      for (const tk of tagKeys) {
+        appendGroup(listEl, side, staged, `📦 원격전용 · ${tk}`, '', byTag[tk]);
       }
-      appendGroup(listEl, side, staged, `📦 원격전용 · 분류 없음`, 'depth 미지정', byDepth.none);
-    } else if (DEPTH_KEYS.includes(cat)) {
-      const sub = state.catalog.depths?.[cat] || '';
-      appendGroup(listEl, side, staged, `📦 원격전용 · ${cat}`, sub, byDepth[cat]);
-    } else if (cat === 'nodepth') {
-      appendGroup(listEl, side, staged, `📦 원격전용 · 분류 없음`, 'depth 미지정', byDepth.none);
+      appendGroup(listEl, side, staged, `📦 원격전용 · 분류 없음`, '태그 미지정', byTag.none);
+    } else if (tagKeys.includes(cat)) {
+      appendGroup(listEl, side, staged, `📦 원격전용 · ${cat}`, '', byTag[cat]);
+    } else if (cat === 'notag') {
+      appendGroup(listEl, side, staged, `📦 원격전용 · 분류 없음`, '태그 미지정', byTag.none);
     }
   }
 
@@ -262,11 +322,11 @@ function renderSkillItem(side, item, staged) {
   b.textContent = label;
   badgeWrap.appendChild(b);
 
-  const depth = depthLabel(item.name);
-  if (depth) {
+  const tag = tagLabel(item.name);
+  if (tag) {
     const d = document.createElement('span');
     d.className = 'skill-badge badge-depth';
-    d.textContent = depth;
+    d.textContent = tag;
     badgeWrap.appendChild(d);
   }
 
@@ -281,7 +341,7 @@ function toggleStage(side, name) {
   const s = stagedSet(side);
   if (s.has(name)) {
     s.delete(name);
-    if (side === 'local') state.uploadDepths.delete(name);
+    if (side === 'local') state.uploadTags.delete(name);
   } else {
     s.add(name);
   }
@@ -330,24 +390,34 @@ function renderStageRows(side, container, stagedSet) {
     if (side === 'local') {
       const sel = document.createElement('select');
       sel.className = 'depth-select';
-      sel.title = '업로드 depth 분류';
-      const existing = depthLabel(name); // 이미 원격에 있으면 depth 기본값
-      const current  = state.uploadDepths.get(name) ?? existing ?? '';
+      sel.title = '업로드 태그 분류';
+      const existing = tagLabel(name); // 이미 원격에 있으면 기존 태그 기본값
+      const current  = state.uploadTags.get(name) ?? existing ?? '';
 
       const optNone = document.createElement('option');
       optNone.value = ''; optNone.textContent = '분류 없음';
       sel.appendChild(optNone);
-      for (const dk of DEPTH_KEYS) {
+
+      // 기존 태그 목록 + 'onboarding' 기본 추천 + 현재값
+      const tagOptions = new Set(getTagKeys());
+      tagOptions.add('onboarding');
+      if (current) tagOptions.add(current);
+      const sortedTags = [...tagOptions].sort((a, b) => {
+        if (a === 'onboarding') return -1;
+        if (b === 'onboarding') return 1;
+        return a.localeCompare(b);
+      });
+
+      for (const tk of sortedTags) {
         const o = document.createElement('option');
-        o.value = dk;
-        const sub = state.catalog.depths?.[dk];
-        o.textContent = sub ? `${dk} — ${sub}` : dk;
+        o.value = tk;
+        o.textContent = tk;
         sel.appendChild(o);
       }
       sel.value = current || '';
       sel.addEventListener('change', () => {
-        if (sel.value) state.uploadDepths.set(name, sel.value);
-        else state.uploadDepths.delete(name);
+        if (sel.value) state.uploadTags.set(name, sel.value);
+        else state.uploadTags.delete(name);
       });
       row.appendChild(sel);
     }
@@ -364,7 +434,7 @@ function renderStageRows(side, container, stagedSet) {
 
 function clearStagingSide(side) {
   stagedSet(side).clear();
-  if (side === 'local') state.uploadDepths.clear();
+  if (side === 'local') state.uploadTags.clear();
   renderList(side);
   renderStagePanel();
 }
@@ -383,7 +453,7 @@ async function selectItem(side, name) {
   try {
     const info = await window.api.readSkill(side, name);
     const [label, cls] = badge(side, name);
-    const depth = depthLabel(name);
+    const tag = tagLabel(name);
 
     const head = `
       <div class="detail-head">
@@ -393,7 +463,7 @@ async function selectItem(side, name) {
         </div>
         <div>
           <span class="skill-badge ${cls}">${label}</span>
-          ${depth ? `<span class="skill-badge badge-depth">${depth}</span>` : ''}
+          ${tag ? `<span class="skill-badge badge-depth">${tag}</span>` : ''}
         </div>
       </div>`;
 
@@ -423,7 +493,7 @@ function handleUpload() {
   const names = [...state.stagedLocal];
   if (!names.length) return;
   const list = names.map(n => {
-    const d = state.uploadDepths.get(n) || '(분류 없음)';
+    const d = state.uploadTags.get(n) || '(분류 없음)';
     return ` • ${n}  →  ${d}`;
   }).join('\n');
   alert(`📤 업로드 예정 (LOCAL → REMOTE)\n\n${list}\n\n⚠️ 실제 업로드 기능은 아직 구현 전입니다. (UI 스테이지 확인용)`);
@@ -441,10 +511,10 @@ async function handleDelete() {
   if (!names.length) return;
   const list = names.map(n => ` • ${n}`).join('\n');
   const ok = confirm(
-    `🗑 REMOTE(공용 레포)에서 삭제\n\n${list}\n\n` +
-    `대상: ${state.remote.base || '~/claude_skills/'}\n\n` +
+    `🗑 REMOTE(goskill_stage)에서 삭제\n\n${list}\n\n` +
+    `대상: ${state.remote.base || '~/goskill_stage/'}\n\n` +
     `⚠️ 파일시스템에서 실제로 삭제됩니다.\n` +
-    `(git 되돌리기: cd ~/claude_skills && git checkout <이름>)\n\n` +
+    `(git 되돌리기: cd ~/goskill_stage && git checkout <이름>)\n\n` +
     `진행할까요?`
   );
   if (!ok) return;

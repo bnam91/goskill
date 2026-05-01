@@ -6,4 +6,5 @@ contextBridge.exposeInMainWorld('api', {
   deleteSkill: (side, name)  => ipcRenderer.invoke('skills:delete', { side, name }),
   readCatalog: ()            => ipcRenderer.invoke('catalog:read'),
   sidesInfo:   ()            => ipcRenderer.invoke('sides:info'),
+  gitPull:     ()            => ipcRenderer.invoke('git:pull'),
 });
